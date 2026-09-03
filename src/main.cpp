@@ -9,7 +9,7 @@
 #include <limits>
 #include "PSO_RL.h"
 #include "CEC2014.h" // Importação obrigatória para carregar as matrizes
-
+// Verificando se o repositório esta ok
 struct EstatisticasRun {
     double melhor;
     double pior;
