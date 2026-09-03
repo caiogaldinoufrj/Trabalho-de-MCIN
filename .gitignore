@@ -2,6 +2,5 @@ build/
 bin/
 *.o
 *.out
-input_data/*
 results
 !results/.gitkeep
