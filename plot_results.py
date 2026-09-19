@@ -6,8 +6,25 @@ import pandas as pd
 # Configurações do experimento
 funcoes = [2, 4, 6, 7, 9, 13]
 dimensoes = [30, 50]
-modos = ["CANONICO", "ESTATICO_RL", "TVAC_RL"]
-cores = {"CANONICO": "red", "ESTATICO_RL": "blue", "TVAC_RL": "green"}
+
+# A ordem aqui reflete a evolução do seu Estudo de Ablação
+modos = [
+    "CANONICO",       # Baseline 1: Passivo e Estático
+    "TVAC_PURO",      # Baseline 2: Dinâmico, mas sem IA
+    "ESTATICO_RL",    # Isolamento 1: Só Topologia
+    "RL_CINEMATICO",  # Isolamento 2: Só Cinemática
+    "TVAC_RL",        # Sua contribuição primária (Desacoplamento)
+    "LPSR_RL"         # Sua contribuição secundária (Framework completo)
+]
+
+cores = {
+    "CANONICO": "red", 
+    "TVAC_PURO": "gray",        # Cinza destaca bem que é um "baseline" da literatura
+    "ESTATICO_RL": "blue", 
+    "RL_CINEMATICO": "purple",  # Roxo cria uma ponte visual clara com o azul
+    "TVAC_RL": "green", 
+    "LPSR_RL": "orange" 
+}
 
 os.makedirs("results/plots", exist_ok=True)
 
@@ -33,7 +50,7 @@ def carregar_e_padronizar(filepath):
 
 for D in dimensoes:
     for func in funcoes:
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=(8, 6.5))
         plt.title(f"Convergência - Função F{func} (D={D})", fontsize=14)
         plt.xlabel("Gerações", fontsize=12)
         plt.ylabel("Erro (Log Scale)", fontsize=12)

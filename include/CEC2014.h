@@ -1,148 +1,158 @@
-#ifndef CEC2014_CUH
-#define CEC2014_CUH
+#ifndef CEC2014_H
+#define CEC2014_H
 
-#include <cuda_runtime.h>
-#include <iostream>
-#include <fstream>
-#include <string>
 #include <vector>
+#include <cmath>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <map>
+#include <memory>
 #include <cstdlib>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-// 1. Classe Host (CPU): Lê os TXTs e joga para a memória da Placa de Vídeo
-class GerenciadorDadosCUDA {
-public:
-    double* d_shifts;
-    double* d_matrizes;
-    int max_func_id = 13; // Aloca um array de 0 a 13 para mapeamento direto O(1)
+class TransformadorCEC {
+private:
+    std::map<int, std::vector<double>> shifts;
+    std::map<int, std::vector<std::vector<double>>> matrizes;
+    int D;
 
-    GerenciadorDadosCUDA(int D, const std::vector<int>& funcoesAlvo) {
-        // Alocação linear temporária na memória RAM (Host)
-        std::vector<double> h_shifts((max_func_id + 1) * D, 0.0);
-        std::vector<double> h_matrizes((max_func_id + 1) * D * D, 0.0);
-
-        for (int func : funcoesAlvo) {
-            std::string file_shift = "input_data/shift_data_" + std::to_string(func) + ".txt";
-            std::ifstream fs(file_shift);
-            if (!fs.is_open()) {
-                std::cerr << "Erro fatal CUDA: Arquivo " << file_shift << " ausente.\n";
-                exit(1);
-            }
-            for (int i = 0; i < D; ++i) fs >> h_shifts[func * D + i];
-
-            std::string file_mat = "input_data/M_" + std::to_string(func) + "_D" + std::to_string(D) + ".txt";
-            std::ifstream fm(file_mat);
-            if (!fm.is_open()) {
-                std::cerr << "Erro fatal CUDA: Arquivo " << file_mat << " ausente.\n";
-                exit(1);
-            }
-            for (int i = 0; i < D * D; ++i) fm >> h_matrizes[func * D * D + i];
+    void carregarShift(int funcID) {
+        std::string filename = "input_data/shift_data_" + std::to_string(funcID) + ".txt";
+        std::ifstream file(filename);
+        if (!file.is_open()) {
+            std::cerr << "Erro fatal: Arquivo de shift " << filename << " ausente na raiz.\n";
+            exit(1);
         }
-
-        // Alocação na memória de vídeo (Device - VRAM)
-        cudaMalloc(&d_shifts, (max_func_id + 1) * D * sizeof(double));
-        cudaMalloc(&d_matrizes, (max_func_id + 1) * D * D * sizeof(double));
-
-        // Transferência via barramento PCIe: RAM -> VRAM
-        cudaMemcpy(d_shifts, h_shifts.data(), (max_func_id + 1) * D * sizeof(double), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_matrizes, h_matrizes.data(), (max_func_id + 1) * D * D * sizeof(double), cudaMemcpyHostToDevice);
+        std::vector<double> O(D);
+        for (int i = 0; i < D; ++i) file >> O[i];
+        shifts[funcID] = std::move(O);
     }
 
-    ~GerenciadorDadosCUDA() {
-        cudaFree(d_shifts);
-        cudaFree(d_matrizes);
+    void carregarMatriz(int funcID) {
+        std::string filename = "input_data/M_" + std::to_string(funcID) + "_D" + std::to_string(D) + ".txt";
+        std::ifstream file(filename);
+        if (!file.is_open()) {
+            std::cerr << "Erro fatal: Arquivo de rotacao " << filename << " ausente na raiz.\n";
+            exit(1);
+        }
+        std::vector<std::vector<double>> M(D, std::vector<double>(D));
+        for (int i = 0; i < D; ++i) {
+            for (int j = 0; j < D; ++j) file >> M[i][j];
+        }
+        matrizes[funcID] = std::move(M);
+    }
+
+public:
+    TransformadorCEC(int dimensao, const std::vector<int>& funcoesAlvo) : D(dimensao) {
+        for (int func : funcoesAlvo) {
+            carregarShift(func);
+            carregarMatriz(func); // Correção: A F2 do CEC 2014 original roda matriz sim
+        }
+    }
+
+    // Aplica z = M_i * ((x - o_i) * escala)
+    std::vector<double> transformar(int funcID, const std::vector<double>& x, double escala) {
+        std::vector<double> z(D, 0.0);
+        std::vector<double> x_shift(D, 0.0);
+        
+        const auto& shift = shifts[funcID];
+        const auto& M = matrizes[funcID];
+
+        for (int i = 0; i < D; ++i) {
+            x_shift[i] = (x[i] - shift[i]) * escala;
+        }
+
+        for (int i = 0; i < D; ++i) {
+            for (int j = 0; j < D; ++j) {
+                z[i] += M[i][j] * x_shift[j];
+            }
+        }
+        return z;
     }
 };
 
-// 2. Função Device (GPU): Matemática pura chamada por milhares de threads simultâneas
-__device__ double avaliar_na_gpu(int funcID, const double* x, int D, const double* d_shifts, const double* d_matrizes) {
-    // Alocação em memória local/registrador super rápida da GPU (D maximo = 100)
-    double z[100];
-    double x_shift[100];
+class AvaliadorCEC {
+private:
+    inline static std::unique_ptr<TransformadorCEC> transformador = nullptr;
     
-    // Mapeamento direto (O(1)) do ponteiro da VRAM para a função atual
-    const double* shift = &d_shifts[funcID * D];
-    const double* M = &d_matrizes[funcID * D * D];
-
-    double escala = 1.0;
-    if (funcID == 4) escala = 2.048 / 100.0;
-    else if (funcID == 6) escala = 0.5 / 100.0;
-    else if (funcID == 7) escala = 600.0 / 100.0;
-    else if (funcID == 9) escala = 5.12 / 100.0;
-    else if (funcID == 13) escala = 5.0 / 100.0;
-
-    for (int i = 0; i < D; ++i) {
-        x_shift[i] = (x[i] - shift[i]) * escala;
-        z[i] = 0.0;
+public:
+    static void inicializarTransformador(int D, const std::vector<int>& funcoesAlvo) {
+        transformador = std::make_unique<TransformadorCEC>(D, funcoesAlvo);
     }
 
-    // Aplicação da Matriz de Rotação O(N^2) executada individualmente por cada thread
-    for (int i = 0; i < D; ++i) {
-        for (int j = 0; j < D; ++j) {
-            z[i] += M[i * D + j] * x_shift[j];
-        }
-    }
+    static double avaliar(int funcID, const std::vector<double>& x, double otimoGlobal) {
+        double fitness = 0.0;
+        int D = x.size();
+        std::vector<double> z;
 
-    double fitness = 0.0;
-
-    switch (funcID) {
-        case 2: {
-            fitness = z[0] * z[0];
-            for (int i = 1; i < D; ++i) fitness += 1e6 * (z[i] * z[i]);
-            break;
-        }
-        case 4: {
-            for (int i = 0; i < D - 1; ++i) {
-                double z_i = z[i] + 1.0;
-                double z_next = z[i+1] + 1.0;
-                double term1 = (z_i * z_i) - z_next;
-                double term2 = z_i - 1.0;
-                fitness += 100.0 * (term1 * term1) + (term2 * term2);
+        switch (funcID) {
+            case 2: {
+                z = transformador->transformar(funcID, x, 1.0);
+                fitness = z[0] * z[0];
+                for (int i = 1; i < D; ++i) fitness += 1e6 * (z[i] * z[i]);
+                break;
             }
-            break;
-        }
-        case 6: {
-            double a = 0.5, b = 3.0, sum2 = 0.0;
-            int kmax = 20;
-            for (int k = 0; k <= kmax; ++k) sum2 += pow(a, k) * cos(2.0 * M_PI * pow(b, k) * 0.5);
-            for (int i = 0; i < D; ++i) {
-                double sum1 = 0.0;
-                for (int k = 0; k <= kmax; ++k) sum1 += pow(a, k) * cos(2.0 * M_PI * pow(b, k) * (z[i] + 0.5));
-                fitness += sum1;
+            case 4: {
+                z = transformador->transformar(funcID, x, 2.048 / 100.0);
+                for (int i = 0; i < D - 1; ++i) {
+                    double z_i = z[i] + 1.0;
+                    double z_next = z[i+1] + 1.0;
+                    double term1 = (z_i * z_i) - z_next;
+                    double term2 = z_i - 1.0;
+                    fitness += 100.0 * (term1 * term1) + (term2 * term2);
+                }
+                break;
             }
-            fitness -= D * sum2;
-            break;
-        }
-        case 7: {
-            double sum = 0.0, prod = 1.0;
-            for (int i = 0; i < D; ++i) {
-                sum += (z[i] * z[i]) / 4000.0;
-                prod *= cos(z[i] / sqrt(i + 1.0));
+            case 6: {
+                z = transformador->transformar(funcID, x, 0.5 / 100.0);
+                double a = 0.5, b = 3.0, sum2 = 0.0;
+                int kmax = 20;
+                for (int k = 0; k <= kmax; ++k) sum2 += std::pow(a, k) * std::cos(2.0 * M_PI * std::pow(b, k) * 0.5);
+                for (int i = 0; i < D; ++i) {
+                    double sum1 = 0.0;
+                    for (int k = 0; k <= kmax; ++k) sum1 += std::pow(a, k) * std::cos(2.0 * M_PI * std::pow(b, k) * (z[i] + 0.5));
+                    fitness += sum1;
+                }
+                fitness -= D * sum2;
+                break;
             }
-            fitness = sum - prod + 1.0;
-            break;
-        }
-        case 9: {
-            for (int i = 0; i < D; ++i) fitness += (z[i] * z[i]) - 10.0 * cos(2.0 * M_PI * z[i]) + 10.0;
-            break;
-        }
-        case 13: {
-            double sum_sq = 0.0, sum = 0.0;
-            for (int i = 0; i < D; ++i) {
-                z[i] = z[i] - 1.0;
-                sum_sq += z[i] * z[i];
-                sum += z[i];
+            case 7: {
+                z = transformador->transformar(funcID, x, 600.0 / 100.0);
+                double sum = 0.0, prod = 1.0;
+                for (int i = 0; i < D; ++i) {
+                    sum += (z[i] * z[i]) / 4000.0;
+                    prod *= std::cos(z[i] / std::sqrt(i + 1.0));
+                }
+                fitness = sum - prod + 1.0;
+                break;
             }
-            fitness = pow(fabs(sum_sq - D), 0.25) + (0.5 * sum_sq + sum) / D + 0.5;
-            break;
+            case 9: {
+                z = transformador->transformar(funcID, x, 5.12 / 100.0);
+                for (int i = 0; i < D; ++i) fitness += (z[i] * z[i]) - 10.0 * std::cos(2.0 * M_PI * z[i]) + 10.0;
+                break;
+            }
+            case 13: {
+                z = transformador->transformar(funcID, x, 5.0 / 100.0);
+                double sum_sq = 0.0, sum = 0.0;
+                for (int i = 0; i < D; ++i) {
+                    z[i] = z[i] - 1.0; // Correção: Deslocamento forçado na linha 477 do C original
+                    sum_sq += z[i] * z[i];
+                    sum += z[i];
+                }
+                fitness = std::pow(std::abs(sum_sq - D), 0.25) + (0.5 * sum_sq + sum) / D + 0.5;
+                break;
+            }
+            default: {
+                std::cerr << "Erro: Funcao " << funcID << " nao implementada no AvaliadorCEC.\n";
+                exit(1);
+            }
         }
+        return fitness + otimoGlobal;
     }
-    
-    // otimoGlobal é fixo (funcID * 100) na CEC 2014
-    return fitness + (funcID * 100.0); 
-}
+};
 
 #endif

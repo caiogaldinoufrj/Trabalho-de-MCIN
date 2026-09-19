@@ -4,3 +4,11 @@ bin/
 *.out
 results
 !results/.gitkeep
+env/*
+env/
+env
+graficos
+Resultados por função de recompensa
+results
+*csv
+*png

@@ -70,7 +70,7 @@ int main() {
     const std::vector<int> funcoes = {2, 4, 6, 7, 9, 13};
     const std::vector<int> dimensoes = {30, 50};
     const int numExecucoes = 30; 
-    const int tamanhoEnxame = 100;
+    const int tamanhoEnxame = 50;
 
     const std::vector<std::pair<PSO_RL::ModoPSO, std::string>> modos = {
         {PSO_RL::CANONICO, "CANONICO"},

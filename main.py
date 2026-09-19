@@ -27,19 +27,23 @@ def main():
     funcoes = [2, 4, 6, 7, 9, 13]
     dimensoes = [30, 50]
     num_execucoes = 30
-    tamanho_enxame = 100
 
+    # Nova estrutura de tuplas: (Modo, Nome, População Inicial)
     modos = [
-        (ModoPSO.CANONICO, "CANONICO"),
-        (ModoPSO.ESTATICO_RL, "ESTATICO_RL"),
-        (ModoPSO.TVAC_RL, "TVAC_RL")
+        (ModoPSO.CANONICO,     "CANONICO",    100),
+        (ModoPSO.TVAC_PURO,      "TVAC_PURO",    100),
+        (ModoPSO.ESTATICO_RL,  "ESTATICO_RL", 100),
+        (ModoPSO.RL_CINEMATICO, "RL_CINEMATICO", 100),
+        (ModoPSO.TVAC_RL,      "TVAC_RL",     100),
+        (ModoPSO.LPSR_TVAC_RL, "LPSR_RL",     200) 
     ]
 
     os.makedirs("results", exist_ok=True)
     arquivo_resumo = "results/resumo_estatistico.csv"
     
+    # Adicionada a coluna 'PopInicial' no CSV
     with open(arquivo_resumo, "w") as f:
-        f.write("Modo,Dimensao,Funcao,Melhor,Pior,Mediana,Media,DesvioPadrao\n")
+        f.write("Modo,Dimensao,Funcao,PopInicial,Melhor,Pior,Mediana,Media,DesvioPadrao\n")
 
     for D in dimensoes:
         # Carrega tensores de shift e rotação para a VRAM
@@ -53,7 +57,8 @@ def main():
         for func in funcoes:
             print(f"\n>>> Avaliando Função F{func} (D = {D})")
 
-            for modo, nome_modo in modos:
+            # Desempacota as tuplas com o tamanho específico de cada modo
+            for modo, nome_modo, tamanho_pop in modos:
                 curvas_convergencia = []
                 erros_finais = []
                 
@@ -61,7 +66,8 @@ def main():
 
                 for run in range(num_execucoes):
                     seed = 19937 + run
-                    pso = PSO_RL(D, tamanho_enxame, func, modo, seed)
+                    # Instancia o PSO com a população independente
+                    pso = PSO_RL(D, tamanho_pop, func, modo, seed)
                     
                     curva = pso.executar()
                     curvas_convergencia.append(curva)
@@ -79,10 +85,11 @@ def main():
                 est = calcular_estatisticas(erros_finais)
 
                 with open(arquivo_resumo, "a") as f:
-                    f.write(f"{nome_modo},{D},{func},{est['Melhor']:.4e},{est['Pior']:.4e},"
+                    f.write(f"{nome_modo},{D},{func},{tamanho_pop},{est['Melhor']:.4e},{est['Pior']:.4e},"
                             f"{est['Mediana']:.4e},{est['Media']:.4e},{est['DesvioPadrao']:.4e}\n")
 
-                print(f"  [{nome_modo:<11}] Média: {est['Media']:.4e} | Mediana: {est['Mediana']:.4e} | "
+                # Print atualizado para mostrar a população na tela
+                print(f"  [{nome_modo:<11}] Pop: {tamanho_pop:<3} | Média: {est['Media']:.4e} | Mediana: {est['Mediana']:.4e} | "
                       f"Melhor: {est['Melhor']:.4e} | Desvio: {est['DesvioPadrao']:.4e} | "
                       f"Tempo: {tempo_fim - tempo_inicio:.2f}s")
 
